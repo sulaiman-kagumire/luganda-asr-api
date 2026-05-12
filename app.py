@@ -31,11 +31,11 @@ from transformers import (
 )
 from utils import adjust_pauses_for_hf_pipeline_output
 
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
 print(f"Loading Luganda ASR model ({XLSR_MODEL})...")
 xlsr_processor = Wav2Vec2ProcessorWithLM.from_pretrained(XLSR_MODEL)
-xlsr_model     = Wav2Vec2ForCTC.from_pretrained(XLSR_MODEL).eval()
-device         = "cuda" if torch.cuda.is_available() else "cpu"
-xlsr_model     = xlsr_model.to(device)
+xlsr_model     = Wav2Vec2ForCTC.from_pretrained(XLSR_MODEL).eval().to(device)
 
 print(f"Loading CrisperWhisper ({WHISPER_EN})...")
 crisp_processor = AutoProcessor.from_pretrained(WHISPER_EN)
@@ -152,12 +152,12 @@ async def transcribe(
 
         if duration < MIN_DURATION:
             results.append({
-                "speaker": seg["speaker_id"],
-                "start":   start,
-                "end":     end,
+                "speaker":  seg["speaker_id"],
+                "start":    start,
+                "end":      end,
                 "language": "",
-                "text":    "",
-                "skipped": True,
+                "text":     "",
+                "skipped":  True,
             })
             continue
 
