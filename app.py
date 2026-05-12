@@ -4,6 +4,12 @@ import json
 import unicodedata
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+import os
+from huggingface_hub import login
+
+hf_token = os.environ.get("HF_TOKEN")
+if hf_token:
+    login(token=hf_token)
 
 XLSR_MODEL    = "sulaimank/wav2vec2-xlsr-luganda"
 WHISPER_EN    = "nyrahealth/CrisperWhisper"
