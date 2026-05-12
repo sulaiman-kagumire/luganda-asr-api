@@ -37,6 +37,7 @@ jobs:
           host: ${{ secrets.VM_IP }}
           username: inference
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          command_timeout: 30m        # ← add this
           script: |
             docker pull kagumire/luganda-asr-api:latest
             docker stop luganda-asr-api || true
