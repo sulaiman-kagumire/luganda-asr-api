@@ -38,7 +38,6 @@ jobs:
           username: inference
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           command_timeout: 30m
-          envs: HF_TOKEN
           script: |
             echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
             docker pull kagumire/luganda-asr-api:latest
@@ -47,6 +46,7 @@ jobs:
             docker run -d \
               --name luganda-asr-api \
               --restart unless-stopped \
+              --gpus all \
               -p 8011:8000 \
               -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
               kagumire/luganda-asr-api:latest

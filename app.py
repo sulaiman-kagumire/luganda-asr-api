@@ -1,12 +1,13 @@
 import io
 import re
 import json
+import os
 import unicodedata
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-import os
 from huggingface_hub import login
 
+# authenticate with HuggingFace
 hf_token = os.environ.get("HF_TOKEN")
 if hf_token:
     login(token=hf_token)
@@ -38,6 +39,7 @@ from transformers import (
 from utils import adjust_pauses_for_hf_pipeline_output
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"Using device: {device}")
 
 print(f"Loading Luganda ASR model ({XLSR_MODEL})...")
 xlsr_processor = Wav2Vec2ProcessorWithLM.from_pretrained(XLSR_MODEL)
@@ -122,7 +124,7 @@ def transcribe_english(array):
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "device": device}
 
 
 @app.post("/transcribe")
