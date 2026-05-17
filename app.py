@@ -94,6 +94,7 @@ def detect_language(array):
     probs    = F.softmax(logits, dim=-1)[0]
     lug_prob = probs[lug_id].item() if lug_id is not None else 0.0
     eng_prob = probs[eng_id].item() if eng_id is not None else 0.0
+    del inputs, logits, probs
     total    = lug_prob + eng_prob
     if total == 0:
         return "lug-eng"
@@ -113,7 +114,9 @@ def transcribe_luganda(array):
     ).to(device)
     with torch.no_grad():
         logits = xlsr_model(**inputs).logits
-    return xlsr_processor.batch_decode(logits.cpu().numpy()).text[0].strip()
+    text = xlsr_processor.batch_decode(logits.cpu().numpy()).text[0].strip()
+    del inputs, logits
+    return text
 
 
 def transcribe_english(array):
@@ -173,9 +176,8 @@ async def transcribe(
         end_p   = min(total_duration, end + PAD_SECONDS)
         array   = full_audio[int(start_p * SAMPLE_RATE):int(end_p * SAMPLE_RATE)]
 
-        try:
+        def _run():
             lang = detect_language(array)
-
             if lang == "eng":
                 text = transcribe_english(array)
             elif lang == "lug":
@@ -184,11 +186,22 @@ async def transcribe(
                 text_lug = transcribe_luganda(array)
                 text_eng = transcribe_english(array)
                 text = text_lug if len(text_lug) >= len(text_eng) else text_eng
+            return lang, text
 
+        try:
+            try:
+                lang, text = _run()
+            except torch.cuda.OutOfMemoryError:
+                if device == "cuda":
+                    torch.cuda.empty_cache()
+                lang, text = _run()
         except Exception as e:
             print(f"  [ERROR] {seg['speaker_id']} @ {start:.2f}s — {e}")
             lang = ""
             text = ""
+
+        if device == "cuda":
+            torch.cuda.empty_cache()
 
         results.append({
             "speaker":  seg["speaker_id"],
