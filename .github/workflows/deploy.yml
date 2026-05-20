@@ -37,7 +37,7 @@ jobs:
           host: ${{ secrets.VM_IP }}
           username: inference
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          command_timeout: 60m
+          command_timeout: 30m
           script: |
             echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
             docker pull kagumire/luganda-asr-api:latest
