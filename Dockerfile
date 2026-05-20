@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y \
 RUN pip install --no-cache-dir \
     fastapi[standard] \
     uvicorn \
-    git+https://github.com/nyrahealth/transformers.git@crisper_whisper \
+    transformers \
     librosa \
     soundfile \
     torch \
@@ -23,11 +23,7 @@ RUN pip install --no-cache-dir \
     https://github.com/kpu/kenlm/archive/master.zip \
     accelerate
 
-RUN curl -o /app/utils.py https://raw.githubusercontent.com/nyrahealth/CrisperWhisper/main/utils.py
-
 COPY app.py .
-
-ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 EXPOSE 8000
 

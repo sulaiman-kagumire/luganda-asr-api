@@ -35,25 +35,26 @@ from transformers import (
     Wav2Vec2ForSequenceClassification, AutoFeatureExtractor,
 )
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"Using device: {device}")
+device_asr = "cuda" if torch.cuda.is_available() else "cpu"
+device_lid = "cpu"
+print(f"ASR device: {device_asr} | LID device: {device_lid}")
 
 print(f"Loading Luganda ASR model ({XLSR_MODEL})...")
 xlsr_processor = Wav2Vec2ProcessorWithLM.from_pretrained(XLSR_MODEL)
-xlsr_model     = Wav2Vec2ForCTC.from_pretrained(XLSR_MODEL).eval().to(device)
+xlsr_model     = Wav2Vec2ForCTC.from_pretrained(XLSR_MODEL).eval().to(device_asr)
 
 print(f"Loading English Whisper model ({WHISPER_EN})...")
 whisper_processor = WhisperProcessor.from_pretrained(WHISPER_EN)
-whisper_model     = WhisperForConditionalGeneration.from_pretrained(WHISPER_EN).eval().to(device)
+whisper_model     = WhisperForConditionalGeneration.from_pretrained(WHISPER_EN).eval().to(device_asr)
 
 print(f"Loading Language ID model ({LID_MODEL})...")
 lid_extractor = AutoFeatureExtractor.from_pretrained(LID_MODEL)
-lid_model     = Wav2Vec2ForSequenceClassification.from_pretrained(LID_MODEL).eval().to(device)
+lid_model     = Wav2Vec2ForSequenceClassification.from_pretrained(LID_MODEL).eval().to(device_lid)
 label2id      = {v: k for k, v in lid_model.config.id2label.items()}
 lug_id        = label2id.get("lug")
 eng_id        = label2id.get("eng")
 
-print(f"All models ready on {device}.")
+print(f"All models ready — ASR on {device_asr}, LID on {device_lid}.")
 
 
 def normalise(text):
@@ -70,7 +71,7 @@ def detect_language(array):
     import torch.nn.functional as F
     inputs = lid_extractor(
         array, sampling_rate=SAMPLE_RATE, return_tensors="pt", padding=True
-    ).to(device)
+    ).to(device_lid)
     with torch.no_grad():
         logits = lid_model(**inputs).logits
     probs    = F.softmax(logits, dim=-1)[0]
@@ -92,7 +93,7 @@ def detect_language(array):
 def transcribe_luganda(array):
     inputs = xlsr_processor(
         array, sampling_rate=SAMPLE_RATE, return_tensors="pt", padding=True
-    ).to(device)
+    ).to(device_asr)
     with torch.no_grad():
         logits = xlsr_model(**inputs).logits
     return xlsr_processor.batch_decode(logits.cpu().numpy()).text[0].strip()
@@ -101,7 +102,7 @@ def transcribe_luganda(array):
 def transcribe_english(array):
     inputs = whisper_processor(
         array, sampling_rate=SAMPLE_RATE, return_tensors="pt"
-    ).to(device)
+    ).to(device_asr)
     with torch.no_grad():
         predicted_ids = whisper_model.generate(inputs["input_features"])
     return whisper_processor.batch_decode(predicted_ids, skip_special_tokens=True)[0].strip()
@@ -109,7 +110,11 @@ def transcribe_english(array):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "device": device}
+    return {
+        "status":     "ok",
+        "asr_device": device_asr,
+        "lid_device": device_lid,
+    }
 
 
 @app.post("/transcribe")

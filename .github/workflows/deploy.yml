@@ -50,3 +50,4 @@ jobs:
               -p 8011:8000 \
               -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
               kagumire/luganda-asr-api:latest
+              
