@@ -12,7 +12,7 @@ if hf_token:
     login(token=hf_token)
 
 XLSR_MODEL    = "sulaimank/wav2vec2-xlsr-luganda"
-WHISPER_EN    = "openai/whisper-small.en"
+WHISPER_EN    = "nyrahealth/CrisperWhisper"
 LID_MODEL     = "facebook/mms-lid-256"
 SAMPLE_RATE   = 16000
 MIN_DURATION  = 1.0
@@ -31,21 +31,27 @@ import torch
 import librosa
 from transformers import (
     Wav2Vec2ForCTC, Wav2Vec2ProcessorWithLM,
-    WhisperProcessor, WhisperForConditionalGeneration,
+    AutoModelForSpeechSeq2Seq, AutoProcessor,
     Wav2Vec2ForSequenceClassification, AutoFeatureExtractor,
 )
 
-device_asr = "cuda" if torch.cuda.is_available() else "cpu"
-device_lid = "cpu"
-print(f"ASR device: {device_asr} | LID device: {device_lid}")
+device_asr  = "cuda" if torch.cuda.is_available() else "cpu"
+device_lid  = "cpu"
+torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+print(f"ASR device: {device_asr} ({torch_dtype}) | LID device: {device_lid}")
 
 print(f"Loading Luganda ASR model ({XLSR_MODEL})...")
 xlsr_processor = Wav2Vec2ProcessorWithLM.from_pretrained(XLSR_MODEL)
 xlsr_model     = Wav2Vec2ForCTC.from_pretrained(XLSR_MODEL).eval().to(device_asr)
 
 print(f"Loading English Whisper model ({WHISPER_EN})...")
-whisper_processor = WhisperProcessor.from_pretrained(WHISPER_EN)
-whisper_model     = WhisperForConditionalGeneration.from_pretrained(WHISPER_EN).eval().to(device_asr)
+whisper_processor = AutoProcessor.from_pretrained(WHISPER_EN)
+whisper_model     = AutoModelForSpeechSeq2Seq.from_pretrained(
+    WHISPER_EN,
+    torch_dtype=torch_dtype,
+    low_cpu_mem_usage=True,
+    use_safetensors=True,
+).eval().to(device_asr)
 
 print(f"Loading Language ID model ({LID_MODEL})...")
 lid_extractor = AutoFeatureExtractor.from_pretrained(LID_MODEL)
@@ -77,6 +83,7 @@ def detect_language(array):
     probs    = F.softmax(logits, dim=-1)[0]
     lug_prob = probs[lug_id].item() if lug_id is not None else 0.0
     eng_prob = probs[eng_id].item() if eng_id is not None else 0.0
+    del inputs, logits, probs
     total    = lug_prob + eng_prob
     if total == 0:
         return "lug-eng"
@@ -96,16 +103,23 @@ def transcribe_luganda(array):
     ).to(device_asr)
     with torch.no_grad():
         logits = xlsr_model(**inputs).logits
-    return xlsr_processor.batch_decode(logits.cpu().numpy()).text[0].strip()
+    text = xlsr_processor.batch_decode(logits.cpu().numpy()).text[0].strip()
+    del inputs, logits
+    return text
 
 
 def transcribe_english(array):
     inputs = whisper_processor(
         array, sampling_rate=SAMPLE_RATE, return_tensors="pt"
-    ).to(device_asr)
+    )
+    input_features = inputs["input_features"].to(device_asr, dtype=torch_dtype)
     with torch.no_grad():
-        predicted_ids = whisper_model.generate(inputs["input_features"])
-    return whisper_processor.batch_decode(predicted_ids, skip_special_tokens=True)[0].strip()
+        predicted_ids = whisper_model.generate(
+            input_features, language="en", task="transcribe"
+        )
+    text = whisper_processor.batch_decode(predicted_ids, skip_special_tokens=True)[0].strip()
+    del inputs, input_features, predicted_ids
+    return text
 
 
 @app.get("/health")
