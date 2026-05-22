@@ -128,7 +128,6 @@ def transcribe_english(array):
             input_features,
             language=SUNBIRD_LANG_STRINGS["eng"],
             task="transcribe",
-            max_new_tokens=440,
             no_repeat_ngram_size=3,
             forced_decoder_ids=None,
         )
