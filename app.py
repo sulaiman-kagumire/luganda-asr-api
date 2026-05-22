@@ -115,7 +115,11 @@ def transcribe_english(array):
     input_features = inputs["input_features"].to(device_asr, dtype=torch_dtype)
     with torch.no_grad():
         predicted_ids = whisper_model.generate(
-            input_features, language="en", task="transcribe"
+            input_features,
+            language="en",
+            task="transcribe",
+            max_new_tokens=440,
+            no_repeat_ngram_size=3,
         )
     text = whisper_processor.batch_decode(predicted_ids, skip_special_tokens=True)[0].strip()
     del inputs, input_features, predicted_ids
