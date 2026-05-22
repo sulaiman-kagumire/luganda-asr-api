@@ -12,12 +12,17 @@ if hf_token:
     login(token=hf_token)
 
 XLSR_MODEL    = "sulaimank/wav2vec2-xlsr-luganda"
-WHISPER_EN    = "nyrahealth/CrisperWhisper"
+SUNBIRD_MODEL = "Sunbird/asr-whisper-large-v3-salt"
 LID_MODEL     = "facebook/mms-lid-256"
 SAMPLE_RATE   = 16000
 MIN_DURATION  = 1.0
 PAD_SECONDS   = 0.3
 LID_THRESHOLD = 0.90
+
+SALT_LANGUAGE_TOKENS_WHISPER = {
+    "eng": 50259,
+    "lug": 50355,
+}
 
 app = FastAPI(title="Luganda ASR API", version="0.1.0")
 app.add_middleware(
@@ -44,14 +49,19 @@ print(f"Loading Luganda ASR model ({XLSR_MODEL})...")
 xlsr_processor = Wav2Vec2ProcessorWithLM.from_pretrained(XLSR_MODEL)
 xlsr_model     = Wav2Vec2ForCTC.from_pretrained(XLSR_MODEL).eval().to(device_asr)
 
-print(f"Loading English Whisper model ({WHISPER_EN})...")
-whisper_processor = AutoProcessor.from_pretrained(WHISPER_EN)
-whisper_model     = AutoModelForSpeechSeq2Seq.from_pretrained(
-    WHISPER_EN,
+print(f"Loading Sunbird ASR model ({SUNBIRD_MODEL})...")
+sunbird_processor = AutoProcessor.from_pretrained(SUNBIRD_MODEL)
+sunbird_model     = AutoModelForSpeechSeq2Seq.from_pretrained(
+    SUNBIRD_MODEL,
     torch_dtype=torch_dtype,
     low_cpu_mem_usage=True,
     use_safetensors=True,
 ).eval().to(device_asr)
+
+SUNBIRD_LANG_STRINGS = {
+    code: sunbird_processor.tokenizer.decode(token_id)
+    for code, token_id in SALT_LANGUAGE_TOKENS_WHISPER.items()
+}
 
 print(f"Loading Language ID model ({LID_MODEL})...")
 lid_extractor = AutoFeatureExtractor.from_pretrained(LID_MODEL)
@@ -109,19 +119,20 @@ def transcribe_luganda(array):
 
 
 def transcribe_english(array):
-    inputs = whisper_processor(
+    inputs = sunbird_processor(
         array, sampling_rate=SAMPLE_RATE, return_tensors="pt"
     )
     input_features = inputs["input_features"].to(device_asr, dtype=torch_dtype)
     with torch.no_grad():
-        predicted_ids = whisper_model.generate(
+        predicted_ids = sunbird_model.generate(
             input_features,
-            language="en",
+            language=SUNBIRD_LANG_STRINGS["eng"],
             task="transcribe",
             max_new_tokens=440,
             no_repeat_ngram_size=3,
+            forced_decoder_ids=None,
         )
-    text = whisper_processor.batch_decode(predicted_ids, skip_special_tokens=True)[0].strip()
+    text = sunbird_processor.batch_decode(predicted_ids, skip_special_tokens=True)[0].strip()
     del inputs, input_features, predicted_ids
     return text
 
@@ -180,6 +191,17 @@ async def transcribe(
         start_p = max(0.0, start - PAD_SECONDS)
         end_p   = min(total_duration, end + PAD_SECONDS)
         array   = full_audio[int(start_p * SAMPLE_RATE):int(end_p * SAMPLE_RATE)]
+
+        if len(array) < int(SAMPLE_RATE * MIN_DURATION):
+            results.append({
+                "speaker":  seg["speaker_id"],
+                "start":    start,
+                "end":      end,
+                "language": "",
+                "text":     "",
+                "skipped":  True,
+            })
+            continue
 
         try:
             lang = detect_language(array)
