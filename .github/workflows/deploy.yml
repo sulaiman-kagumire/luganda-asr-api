@@ -48,6 +48,7 @@ jobs:
               --restart unless-stopped \
               --gpus all \
               -p 8011:8000 \
+              -v hf_cache:/root/.cache/huggingface \
               -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
               kagumire/luganda-asr-api:latest
               
