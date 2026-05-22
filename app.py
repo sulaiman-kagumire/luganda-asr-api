@@ -169,22 +169,16 @@ async def transcribe(
 
     full_audio, _ = librosa.load(io.BytesIO(audio_bytes), sr=SAMPLE_RATE, mono=True)
     total_duration = len(full_audio) / SAMPLE_RATE
-    results = []
 
+    # Pass 1: extract arrays and run language ID for every usable segment.
+    prep = []
     for seg in segs:
         start    = seg["start"]
         end      = seg["end"]
         duration = end - start
 
         if duration < MIN_DURATION:
-            results.append({
-                "speaker":  seg["speaker_id"],
-                "start":    start,
-                "end":      end,
-                "language": "",
-                "text":     "",
-                "skipped":  True,
-            })
+            prep.append({"seg": seg, "skipped": True, "array": None, "detected": None})
             continue
 
         start_p = max(0.0, start - PAD_SECONDS)
@@ -192,6 +186,32 @@ async def transcribe(
         array   = full_audio[int(start_p * SAMPLE_RATE):int(end_p * SAMPLE_RATE)]
 
         if len(array) < int(SAMPLE_RATE * MIN_DURATION):
+            prep.append({"seg": seg, "skipped": True, "array": None, "detected": None})
+            continue
+
+        try:
+            detected = detect_language(array)
+        except Exception as e:
+            print(f"  [LID ERROR] {seg['speaker_id']} @ {start:.2f}s — {e}")
+            detected = None
+
+        prep.append({"seg": seg, "skipped": False, "array": array, "detected": detected})
+
+    # Decide the dominant language from segments LID was confident about.
+    lug_count = sum(1 for p in prep if p["detected"] == "lug")
+    eng_count = sum(1 for p in prep if p["detected"] == "eng")
+    dominant  = "eng" if eng_count > lug_count else "lug"
+    print(f"  [LID summary] lug={lug_count}, eng={eng_count}, uncertain/unknown={sum(1 for p in prep if not p['skipped'] and p['detected'] not in ('lug', 'eng'))} → dominant={dominant}")
+
+    # Pass 2: transcribe each segment using its detected language, or the dominant
+    # language as the fallback for uncertain ("lug-eng") and LID-failed segments.
+    results = []
+    for p in prep:
+        seg   = p["seg"]
+        start = seg["start"]
+        end   = seg["end"]
+
+        if p["skipped"]:
             results.append({
                 "speaker":  seg["speaker_id"],
                 "start":    start,
@@ -202,28 +222,25 @@ async def transcribe(
             })
             continue
 
+        detected = p["detected"]
+        resolved = detected if detected in ("lug", "eng") else dominant
+        array    = p["array"]
+
         try:
-            lang = detect_language(array)
-
-            if lang == "eng":
+            if resolved == "eng":
                 text = transcribe_english(array)
-            elif lang == "lug":
-                text = transcribe_luganda(array)
             else:
-                text_lug = transcribe_luganda(array)
-                text_eng = transcribe_english(array)
-                text = text_lug if len(text_lug) >= len(text_eng) else text_eng
-
+                text = transcribe_luganda(array)
         except Exception as e:
             print(f"  [ERROR] {seg['speaker_id']} @ {start:.2f}s — {e}")
-            lang = ""
-            text = ""
+            resolved = ""
+            text     = ""
 
         results.append({
             "speaker":  seg["speaker_id"],
             "start":    start,
             "end":      end,
-            "language": lang,
+            "language": resolved,
             "text":     text,
             "skipped":  False,
         })
