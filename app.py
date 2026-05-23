@@ -2,6 +2,7 @@ import io
 import re
 import json
 import os
+import asyncio
 import unicodedata
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -164,28 +165,13 @@ def health():
     }
 
 
-@app.post("/transcribe")
-async def transcribe(
-    audio_file: UploadFile = File(...),
-    segments:   str        = Form(...),
-):
-    audio_bytes = await audio_file.read()
-    data        = json.loads(segments)
+# Serialize ASR work: only one transcribe pipeline runs the GPU at a time,
+# but the event loop stays free so /health and other endpoints stay responsive
+# even while a long transcribe is in flight.
+asr_lock = asyncio.Lock()
 
-    if isinstance(data, list):
-        raw_segs = data
-    else:
-        raw_segs = data.get("results", {}).get("speaker_segments", [])
 
-    segs = []
-    for s in raw_segs:
-        segs.append({
-            "speaker_id": s.get("speaker_id") or s.get("speaker"),
-            "start":      s["start"],
-            "end":        s["end"],
-            "gender":     s.get("gender", ""),
-        })
-
+def _run_transcribe_pipeline(audio_bytes, segs):
     full_audio, _ = librosa.load(io.BytesIO(audio_bytes), sr=SAMPLE_RATE, mono=True)
     total_duration = len(full_audio) / SAMPLE_RATE
 
@@ -264,7 +250,8 @@ async def transcribe(
             "skipped":  False,
         })
 
-        torch.cuda.empty_cache()
+        if device_asr == "cuda":
+            torch.cuda.empty_cache()
 
     speaker_segments = [r for r in results if not r.get("skipped")]
 
@@ -272,3 +259,29 @@ async def transcribe(
         "transcript_text":  " ".join([s["text"] for s in speaker_segments]),
         "speaker_segments": speaker_segments,
     }
+
+
+@app.post("/transcribe")
+async def transcribe(
+    audio_file: UploadFile = File(...),
+    segments:   str        = Form(...),
+):
+    audio_bytes = await audio_file.read()
+    data        = json.loads(segments)
+
+    if isinstance(data, list):
+        raw_segs = data
+    else:
+        raw_segs = data.get("results", {}).get("speaker_segments", [])
+
+    segs = []
+    for s in raw_segs:
+        segs.append({
+            "speaker_id": s.get("speaker_id") or s.get("speaker"),
+            "start":      s["start"],
+            "end":        s["end"],
+            "gender":     s.get("gender", ""),
+        })
+
+    async with asr_lock:
+        return await asyncio.to_thread(_run_transcribe_pipeline, audio_bytes, segs)
