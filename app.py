@@ -12,8 +12,8 @@ hf_token = os.environ.get("HF_TOKEN")
 if hf_token:
     login(token=hf_token)
 
-# XLSR_MODEL    = "sulaimank/wav2vec2-xlsr-luganda"  # using Sunbird for both lug + eng now
-SUNBIRD_MODEL = "Sunbird/asr-whisper-large-v3-salt"
+SUNBIRD_MODEL = "Sunbird/asr-whisper-large-v3-salt"  # Luganda
+WHISPER_EN    = "nyrahealth/CrisperWhisper"          # English (verbatim — keeps fillers)
 LID_MODEL     = "facebook/mms-lid-256"
 SAMPLE_RATE   = 16000
 MIN_DURATION  = 1.0
@@ -36,19 +36,15 @@ app.add_middleware(
 import torch
 import librosa
 from transformers import (
-    # Wav2Vec2ForCTC, Wav2Vec2ProcessorWithLM,  # XLSR — not used while Sunbird handles both
     AutoModelForSpeechSeq2Seq, AutoProcessor,
     Wav2Vec2ForSequenceClassification, AutoFeatureExtractor,
+    pipeline as hf_pipeline,
 )
 
 device_asr  = "cuda" if torch.cuda.is_available() else "cpu"
 device_lid  = "cpu"
 torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
 print(f"ASR device: {device_asr} ({torch_dtype}) | LID device: {device_lid}")
-
-# print(f"Loading Luganda ASR model ({XLSR_MODEL})...")
-# xlsr_processor = Wav2Vec2ProcessorWithLM.from_pretrained(XLSR_MODEL)
-# xlsr_model     = Wav2Vec2ForCTC.from_pretrained(XLSR_MODEL).eval().to(device_asr)
 
 print(f"Loading Sunbird ASR model ({SUNBIRD_MODEL})...")
 sunbird_processor = AutoProcessor.from_pretrained(SUNBIRD_MODEL)
@@ -63,6 +59,25 @@ SUNBIRD_LANG_STRINGS = {
     code: sunbird_processor.tokenizer.decode(token_id)
     for code, token_id in SALT_LANGUAGE_TOKENS_WHISPER.items()
 }
+
+print(f"Loading CrisperWhisper ({WHISPER_EN})...")
+whisper_processor = AutoProcessor.from_pretrained(WHISPER_EN)
+whisper_model     = AutoModelForSpeechSeq2Seq.from_pretrained(
+    WHISPER_EN,
+    torch_dtype=torch_dtype,
+    low_cpu_mem_usage=True,
+    use_safetensors=True,
+).eval().to(device_asr)
+whisper_pipe = hf_pipeline(
+    "automatic-speech-recognition",
+    model=whisper_model,
+    tokenizer=whisper_processor.tokenizer,
+    feature_extractor=whisper_processor.feature_extractor,
+    chunk_length_s=30,
+    return_timestamps="word",
+    torch_dtype=torch_dtype,
+    device=device_asr,
+)
 
 print(f"Loading Language ID model ({LID_MODEL})...")
 lid_extractor = AutoFeatureExtractor.from_pretrained(LID_MODEL)
@@ -108,18 +123,6 @@ def detect_language(array):
         return "lug-eng"
 
 
-# XLSR-based Luganda transcription — disabled while Sunbird handles both languages.
-# def transcribe_luganda(array):
-#     inputs = xlsr_processor(
-#         array, sampling_rate=SAMPLE_RATE, return_tensors="pt", padding=True
-#     ).to(device_asr)
-#     with torch.no_grad():
-#         logits = xlsr_model(**inputs).logits
-#     text = xlsr_processor.batch_decode(logits.cpu().numpy()).text[0].strip()
-#     del inputs, logits
-#     return text
-
-
 def transcribe_luganda(array):
     inputs = sunbird_processor(
         array, sampling_rate=SAMPLE_RATE, return_tensors="pt"
@@ -139,21 +142,10 @@ def transcribe_luganda(array):
 
 
 def transcribe_english(array):
-    inputs = sunbird_processor(
-        array, sampling_rate=SAMPLE_RATE, return_tensors="pt"
-    )
-    input_features = inputs["input_features"].to(device_asr, dtype=torch_dtype)
-    with torch.no_grad():
-        predicted_ids = sunbird_model.generate(
-            input_features,
-            language=SUNBIRD_LANG_STRINGS["eng"],
-            task="transcribe",
-            no_repeat_ngram_size=3,
-            forced_decoder_ids=None,
-        )
-    text = sunbird_processor.batch_decode(predicted_ids, skip_special_tokens=True)[0].strip()
-    del inputs, input_features, predicted_ids
-    return text
+    from utils import adjust_pauses_for_hf_pipeline_output
+    hf_output = whisper_pipe({"array": array, "sampling_rate": SAMPLE_RATE})
+    result    = adjust_pauses_for_hf_pipeline_output(hf_output)
+    return result["text"].strip()
 
 
 @app.get("/health")

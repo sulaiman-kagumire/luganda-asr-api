@@ -13,15 +13,15 @@ RUN apt-get update && apt-get install -y \
 RUN pip install --no-cache-dir \
     fastapi[standard] \
     uvicorn \
-    transformers \
+    git+https://github.com/nyrahealth/transformers.git@crisper_whisper \
     librosa \
     soundfile \
     torch \
     numpy \
     huggingface-hub \
-    pyctcdecode \
-    https://github.com/kpu/kenlm/archive/master.zip \
     accelerate
+
+RUN curl -o /usr/local/lib/python3.11/utils.py https://raw.githubusercontent.com/nyrahealth/CrisperWhisper/main/utils.py
 
 COPY app.py .
 
