@@ -143,7 +143,10 @@ def transcribe_luganda(array):
 
 def transcribe_english(array):
     from utils import adjust_pauses_for_hf_pipeline_output
-    hf_output = whisper_pipe({"array": array, "sampling_rate": SAMPLE_RATE})
+    hf_output = whisper_pipe(
+        {"array": array, "sampling_rate": SAMPLE_RATE},
+        generate_kwargs={"language": "en", "task": "transcribe"},
+    )
     result    = adjust_pauses_for_hf_pipeline_output(hf_output)
     return result["text"].strip()
 
@@ -200,8 +203,8 @@ def _run_transcribe_pipeline(audio_bytes, segs):
     dominant  = "eng" if eng_count > lug_count else "lug"
     print(f"  [LID summary] lug={lug_count}, eng={eng_count}, uncertain/unknown={sum(1 for p in prep if not p['skipped'] and p['detected'] not in ('lug', 'eng'))} → dominant={dominant}")
 
-    # Pass 2: transcribe each segment using its detected language, or the dominant
-    # language as the fallback for uncertain ("lug-eng") and LID-failed segments.
+    # Pass 2: transcribe every segment using the dominant language's model.
+    # We commit the whole call to one language — no per-segment routing.
     results = []
     for p in prep:
         seg   = p["seg"]
@@ -219,8 +222,7 @@ def _run_transcribe_pipeline(audio_bytes, segs):
             })
             continue
 
-        detected = p["detected"]
-        resolved = detected if detected in ("lug", "eng") else dominant
+        resolved = dominant
         array    = p["array"]
 
         try:
